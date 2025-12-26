@@ -1,0 +1,808 @@
+<!-- index.html -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#0b0f14" />
+  <link rel="manifest" href="manifest.json" />
+  <title>Live Spectrogram (history + axis drag + log + notes)</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin:0; padding:14px; font-family: system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:#0b0f14; color:#e6edf3; }
+    .row { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-start; }
+    .panel { background:#0f1621; border:1px solid #1f2a3a; border-radius:12px; padding:12px; }
+    .hint { font-size:12px; color:#b7c3d1; line-height:1.35; }
+    label { display:grid; gap:6px; font-size:12px; color:#b7c3d1; }
+    input[type="range"] { width:260px; }
+    input[type="number"], select {
+      width:120px; padding:6px 8px; border-radius:8px;
+      border:1px solid #273448; background:#0b0f14; color:#e6edf3;
+    }
+    button {
+      padding:8px 12px; border-radius:10px;
+      border:1px solid #2a3a53; background:#121b28; color:#e6edf3; cursor:pointer;
+    }
+    button:hover { background:#162236; }
+    .kvs { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:#b7c3d1; }
+    .kvs b { color:#e6edf3; }
+    .stack { position:relative; width: min(100%, 1400px); }
+    canvas { display:block; width:100%; border-radius:12px; border:1px solid #1f2a3a; background:#05070a; }
+    #overlay { position:absolute; left:0; top:0; pointer-events:auto; }
+    .sep { height:1px; background:#1f2a3a; margin:10px 0; }
+  </style>
+</head>
+<body>
+
+<div class="row">
+  <div class="panel">
+    <div class="row" style="align-items:center;">
+      <button id="btnStart">Start mic</button>
+      <button id="btnStop" disabled>Stop</button>
+      <button id="btnClear">Clear</button>
+      <label style="margin-left:8px;">
+        Scale
+        <select id="scaleSel">
+          <option value="linear" selected>Linear Hz</option>
+          <option value="log">Log Hz</option>
+        </select>
+      </label>
+      <label>
+        Notes overlay
+        <select id="notesSel">
+          <option value="off" selected>Off</option>
+          <option value="on">On</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="hint" style="margin-top:10px;">
+      Drag on the left axis to change frequency range:
+      <ul style="margin:8px 0 0 16px; padding:0;">
+        <li>Drag near bottom: adjust <b>Bottom Hz</b></li>
+        <li>Drag near top: adjust <b>Top Hz</b></li>
+        <li>(Middle-drag shift is left out for now)</li>
+      </ul>
+      Sliders remain for debugging.
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="kvs">
+      <div>SR: <b id="sr">-</b></div>
+      <div>FFT: <b id="fft">-</b></div>
+      <div>FPS: <b id="fps">-</b></div>
+      <div>Range: <b id="rangeLabel">-</b></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <label>
+        Bottom Hz
+        <div class="row">
+          <input id="minHz" type="number" min="0" step="1" value="0">
+          <input id="minHzRange" type="range" min="0" max="24000" value="0">
+        </div>
+      </label>
+
+      <label>
+        Top Hz
+        <div class="row">
+          <input id="maxHz" type="number" min="1" step="1" value="8000">
+          <input id="maxHzRange" type="range" min="1" max="24000" value="8000">
+        </div>
+      </label>
+
+      <label>
+        Gain (dB lift)
+        <div class="row">
+          <input id="gain" type="number" step="1" value="0">
+          <input id="gainRange" type="range" min="-40" max="40" value="0">
+        </div>
+      </label>
+
+      <label>
+        Dynamic range (dB)
+        <div class="row">
+          <input id="dyn" type="number" min="20" max="140" step="1" value="80">
+          <input id="dynRange" type="range" min="20" max="140" value="80">
+        </div>
+      </label>
+
+      <label>
+        Scroll speed (px/col)
+        <div class="row">
+          <input id="speed" type="number" min="1" max="8" step="1" value="1">
+          <input id="speedRange" type="range" min="1" max="8" value="1">
+        </div>
+      </label>
+
+      <label>
+        Redraw-on-change throttle (ms)
+        <div class="row">
+          <input id="redrawMs" type="number" min="0" max="500" step="10" value="60">
+          <input id="redrawMsRange" type="range" min="0" max="500" step="10" value="60">
+        </div>
+      </label>
+    </div>
+  </div>
+</div>
+
+<div class="row" style="margin-top:12px;">
+  <div class="panel" style="padding:12px;">
+    <div class="stack">
+      <canvas id="spec" width="1400" height="420"></canvas>
+      <canvas id="overlay" width="1400" height="420"></canvas>
+    </div>
+    <div class="hint" style="margin-top:8px;">Waterfall: newest at right. Axis labels reflect current settings.</div>
+  </div>
+
+  <div class="panel" style="padding:12px; width:min(100%, 520px);">
+    <canvas id="spectrum" width="520" height="420"></canvas>
+    <div class="hint" style="margin-top:8px;">Spectrum (latest frame): dB vs Hz. Shares linear/log setting.</div>
+  </div>
+</div>
+
+<script>
+/* =========================
+   Core config & utilities
+========================= */
+function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+
+const TURBO_LUT = (() => {
+  function turbo(t){
+    const r = 34.61 + t*(1172.33 + t*(-10793.56 + t*(33300.12 + t*(-38394.49 + t*14825.05))));
+    const g = 23.31 + t*(557.33 + t*(1225.33 + t*(-3574.96 + t*(2073.03 + t* -311.73))));
+    const b = 27.2  + t*(3211.1 + t*(-15327.97 + t*(27814.0  + t*(-22569.18 + t*6838.66))));
+    return [clamp(Math.round(r),0,255), clamp(Math.round(g),0,255), clamp(Math.round(b),0,255)];
+  }
+  const lut = new Array(256);
+  for(let i=0;i<256;i++) lut[i] = turbo(i/255);
+  return lut;
+})();
+function turboColorByte(v){ return TURBO_LUT[v|0]; }
+
+function linkNumberAndRange(numEl, rangeEl, onChange){
+  const syncFromNum = () => { rangeEl.value = numEl.value; onChange?.(); };
+  const syncFromRange = () => { numEl.value = rangeEl.value; onChange?.(); };
+  numEl.addEventListener('input', syncFromNum);
+  rangeEl.addEventListener('input', syncFromRange);
+}
+
+function nowMs(){ return performance.now(); }
+
+/* =========================
+   DOM
+========================= */
+const spec = document.getElementById('spec');
+const overlay = document.getElementById('overlay');
+const spectrumCanvas = document.getElementById('spectrum');
+
+const sctx = spec.getContext('2d', { alpha:false });
+const octx = overlay.getContext('2d');
+const pctx = spectrumCanvas.getContext('2d', { alpha:false });
+
+const btnStart = document.getElementById('btnStart');
+const btnStop  = document.getElementById('btnStop');
+const btnClear = document.getElementById('btnClear');
+
+const minHzN = document.getElementById('minHz');
+const maxHzN = document.getElementById('maxHz');
+const minHzR = document.getElementById('minHzRange');
+const maxHzR = document.getElementById('maxHzRange');
+
+const gainN = document.getElementById('gain');
+const gainR = document.getElementById('gainRange');
+
+const dynN = document.getElementById('dyn');
+const dynR = document.getElementById('dynRange');
+
+const speedN = document.getElementById('speed');
+const speedR = document.getElementById('speedRange');
+
+const redrawMsN = document.getElementById('redrawMs');
+const redrawMsR = document.getElementById('redrawMsRange');
+
+const scaleSel = document.getElementById('scaleSel');
+const notesSel = document.getElementById('notesSel');
+
+const srEl = document.getElementById('sr');
+const fftEl = document.getElementById('fft');
+const fpsEl = document.getElementById('fps');
+const rangeLabel = document.getElementById('rangeLabel');
+
+linkNumberAndRange(minHzN, minHzR, () => { enforceRange(); scheduleFullRedraw(); });
+linkNumberAndRange(maxHzN, maxHzR, () => { enforceRange(); scheduleFullRedraw(); });
+linkNumberAndRange(gainN, gainR, scheduleFullRedraw);
+linkNumberAndRange(dynN, dynR, scheduleFullRedraw);
+linkNumberAndRange(speedN, speedR); // speed affects incremental scroll only; no full redraw required
+linkNumberAndRange(redrawMsN, redrawMsR);
+
+scaleSel.addEventListener('change', () => { enforceRange(); scheduleFullRedraw(true); });
+notesSel.addEventListener('change', () => { drawOverlay(); });
+
+function enforceRange(){
+  if(!audioCtx) {
+    rangeLabel.textContent = `${minHzN.value}–${maxHzN.value} Hz`;
+    return;
+  }
+  const nyq = Math.floor(audioCtx.sampleRate/2);
+  const minv = clamp(parseInt(minHzN.value||"0",10), 0, nyq);
+  let maxv = clamp(parseInt(maxHzN.value||String(nyq),10), 1, nyq);
+
+  // For log scale, force bottom > 0
+  const isLog = (scaleSel.value === 'log');
+  const minFloor = isLog ? 5 : 0;
+  const minAdj = Math.max(minv, minFloor);
+  if(maxv <= minAdj) maxv = Math.min(nyq, minAdj + 1);
+
+  minHzN.value = String(minAdj);
+  maxHzN.value = String(maxv);
+  minHzR.value = minHzN.value;
+  maxHzR.value = maxHzN.value;
+
+  rangeLabel.textContent = `${minHzN.value}–${maxHzN.value} Hz`;
+}
+
+/* =========================
+   Audio
+========================= */
+let audioCtx = null;
+let analyser = null;
+let mediaStream = null;
+let rafId = null;
+
+const FFT_SIZE = 4096;
+const SMOOTHING = 0.0;
+const db = new Float32Array(FFT_SIZE/2);
+
+/* =========================
+   Spectra history + pixels
+========================= */
+const W = spec.width, H = spec.height;
+const img = sctx.getImageData(0,0,W,H);
+for(let i=0;i<img.data.length;i+=4) img.data[i+3] = 255;
+
+// History: for each x column, store Float32Array of length BINS (FFT_SIZE/2)
+const BINS = FFT_SIZE/2;
+let history = new Array(W);
+for(let x=0;x<W;x++) history[x] = null;
+
+// Latest spectrum reference
+let lastSpectrum = new Float32Array(BINS);
+
+// Full redraw scheduling (avoid re-rendering on every tiny slider move)
+let redrawTimer = null;
+let lastRedrawAt = 0;
+function scheduleFullRedraw(force=false){
+  if(!audioCtx) { drawOverlay(); return; }
+  const throttle = clamp(parseInt(redrawMsN.value||"60",10), 0, 2000);
+  const t = nowMs();
+  if(force || throttle === 0){
+    fullRedraw();
+    return;
+  }
+  // If enough time passed, redraw now; else debounce to throttle window.
+  if(t - lastRedrawAt >= throttle){
+    fullRedraw();
+    return;
+  }
+  if(redrawTimer) clearTimeout(redrawTimer);
+  redrawTimer = setTimeout(() => {
+    redrawTimer = null;
+    fullRedraw();
+  }, throttle);
+}
+
+function clearAll(){
+  // pixels
+  const d = img.data;
+  for(let i=0;i<d.length;i+=4){
+    d[i]=0; d[i+1]=0; d[i+2]=0; d[i+3]=255;
+  }
+  sctx.putImageData(img,0,0);
+  // history
+  for(let x=0;x<W;x++) history[x] = null;
+  drawOverlay();
+  drawSpectrumPlot();
+}
+
+function hzToBin(hz, sampleRate){
+  return Math.round(hz * FFT_SIZE / sampleRate);
+}
+function binToHz(bin, sampleRate){
+  return bin * sampleRate / FFT_SIZE;
+}
+
+function mapYtoHz(y, minHz, maxHz, scale){
+  // y: 0..H-1 (top->bottom). We treat bottom as minHz, top as maxHz.
+  const t = 1 - (y/(H-1)); // 0 bottom, 1 top
+  if(scale === 'linear'){
+    return minHz + t*(maxHz - minHz);
+  } else {
+    // log scale
+    const a = Math.log(minHz);
+    const b = Math.log(maxHz);
+    return Math.exp(a + t*(b - a));
+  }
+}
+
+function hzToY(hz, minHz, maxHz, scale){
+  // returns y in [0,H-1]
+  if(scale === 'linear'){
+    const t = (hz - minHz) / (maxHz - minHz);
+    return (1 - t) * (H-1);
+  } else {
+    const t = (Math.log(hz) - Math.log(minHz)) / (Math.log(maxHz) - Math.log(minHz));
+    return (1 - t) * (H-1);
+  }
+}
+
+// Render ONE column x using the stored spectrum array (Float32Array dB per bin)
+function renderColumn(x, spectrumDb){
+  const sampleRate = audioCtx.sampleRate;
+  const minHz = parseInt(minHzN.value||"0",10);
+  const maxHz = parseInt(maxHzN.value||String(sampleRate/2),10);
+  const gainDb = parseFloat(gainN.value||"0");
+  const dyn = clamp(parseFloat(dynN.value||"80"), 20, 200);
+  const scale = scaleSel.value;
+
+  const d = img.data;
+  for(let y=0;y<H;y++){
+    const hz = mapYtoHz(y, minHz, maxHz, scale);
+    const bin = clamp(hzToBin(hz, sampleRate), 0, BINS-1);
+
+    const vDb = spectrumDb[bin] + gainDb;     // e.g. [-140..0] + gain
+    const norm = clamp((vDb - (0 - dyn)) / dyn, 0, 1);
+    const c = turboColorByte(Math.round(norm*255));
+
+    const idx = (y*W + x) * 4;
+    d[idx] = c[0]; d[idx+1] = c[1]; d[idx+2] = c[2]; d[idx+3] = 255;
+  }
+}
+
+// Scroll image/history left by sp pixels, fill right sp pixels with latest spectrum
+function scrollAndAppend(latestDb){
+  const sp = clamp(parseInt(speedN.value||"1",10), 1, 32);
+  const d = img.data;
+  const rowStride = W*4;
+  const shiftBytes = sp*4;
+
+  // pixels scroll
+  for(let y=0;y<H;y++){
+    const rowStart = y*rowStride;
+    d.copyWithin(rowStart, rowStart + shiftBytes, rowStart + rowStride);
+    const tailStart = rowStart + (W - sp)*4;
+    for(let p=tailStart; p<rowStart+rowStride; p+=4){
+      d[p]=0; d[p+1]=0; d[p+2]=0; d[p+3]=255;
+    }
+  }
+
+  // history scroll (shift references)
+  history.copyWithin(0, sp);
+  for(let i=0;i<sp;i++){
+    // store a copy so later full redraw is correct even if the buffer changes
+    history[W - sp + i] = latestDb.slice();
+  }
+
+  // render rightmost sp columns using current mapping
+  for(let i=0;i<sp;i++){
+    renderColumn(W - sp + i, latestDb);
+  }
+
+  sctx.putImageData(img, 0, 0);
+}
+
+// Full redraw from history (for when settings change)
+function fullRedraw(){
+  if(!audioCtx) return;
+  enforceRange();
+  const d = img.data;
+
+  // If column has no data yet, paint black
+  for(let x=0;x<W;x++){
+    const col = history[x];
+    if(!col){
+      for(let y=0;y<H;y++){
+        const idx = (y*W + x)*4;
+        d[idx]=0; d[idx+1]=0; d[idx+2]=0; d[idx+3]=255;
+      }
+    } else {
+      renderColumn(x, col);
+    }
+  }
+  sctx.putImageData(img,0,0);
+  lastRedrawAt = nowMs();
+  drawOverlay();
+  drawSpectrumPlot();
+}
+
+/* =========================
+   Overlay: axes + (optional) notes
+   No grid.
+========================= */
+function drawOverlay(){
+  const w = overlay.width, h = overlay.height;
+  octx.clearRect(0,0,w,h);
+
+  // axis zone
+  const axisW = 70;
+  const pad = 8;
+
+  // Draw a subtle axis background strip for usability
+  octx.fillStyle = 'rgba(15,22,33,0.85)';
+  octx.fillRect(0,0,axisW,h);
+
+  // Axis line
+  octx.strokeStyle = 'rgba(230,237,243,0.55)';
+  octx.lineWidth = 1;
+  octx.beginPath();
+  octx.moveTo(axisW-0.5, 0);
+  octx.lineTo(axisW-0.5, h);
+  octx.stroke();
+
+  if(!audioCtx){
+    octx.fillStyle = 'rgba(230,237,243,0.8)';
+    octx.font = '12px system-ui';
+    octx.fillText('Hz', pad, 16);
+    return;
+  }
+
+  const sampleRate = audioCtx.sampleRate;
+  const minHz = parseInt(minHzN.value||"0",10);
+  const maxHz = parseInt(maxHzN.value||String(sampleRate/2),10);
+  const scale = scaleSel.value;
+
+  // Choose tick frequencies
+  // Linear: nice steps. Log: decades with 1-2-5 ticks.
+  let ticks = [];
+  if(scale === 'linear'){
+    const span = maxHz - minHz;
+    const targetTicks = 6;
+    const rawStep = span / targetTicks;
+    const pow10 = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const steps = [1,2,5,10].map(m => m*pow10);
+    let step = steps[0];
+    for(const s of steps) if(Math.abs(s-rawStep) < Math.abs(step-rawStep)) step = s;
+    const start = Math.ceil(minHz/step)*step;
+    for(let f=start; f<=maxHz+1e-9; f+=step) ticks.push(f);
+  } else {
+    // log ticks: 1,2,5 per decade
+    const lo = Math.max(minHz, 1);
+    const hi = Math.max(maxHz, lo+1);
+    const d0 = Math.floor(Math.log10(lo));
+    const d1 = Math.ceil(Math.log10(hi));
+    const bases = [1,2,5];
+    for(let d=d0; d<=d1; d++){
+      const decade = Math.pow(10,d);
+      for(const b of bases){
+        const f = b*decade;
+        if(f>=lo && f<=hi) ticks.push(f);
+      }
+    }
+  }
+
+  // Draw ticks + labels
+  octx.fillStyle = 'rgba(230,237,243,0.85)';
+  octx.font = '12px system-ui';
+  octx.textBaseline = 'middle';
+
+  for(const f of ticks){
+    const y = hzToY(f, minHz, maxHz, scale);
+    if(y < 0 || y > h) continue;
+
+    // tick mark
+    octx.strokeStyle = 'rgba(230,237,243,0.45)';
+    octx.beginPath();
+    octx.moveTo(axisW-10, y+0.5);
+    octx.lineTo(axisW-1, y+0.5);
+    octx.stroke();
+
+    // label
+    const label = (f >= 1000) ? `${(f/1000).toFixed(f<10000?1:0)}k` : `${Math.round(f)}`;
+    octx.fillText(label, pad, y);
+  }
+
+  // Axis title
+  octx.fillStyle = 'rgba(230,237,243,0.75)';
+  octx.fillText('Hz', pad, 14);
+
+  // Notes overlay
+  if(notesSel.value === 'on'){
+    drawNoteLines(minHz, maxHz, scale, axisW);
+  }
+}
+
+function pitchClassColor(pc){
+  // 12 pitch classes, deterministic "rainbow-ish" mapping
+  // (not specifying exact palette was not requested; using a simple hue mapping)
+  const hue = (pc / 12) * 360;
+  return `hsla(${hue}, 90%, 60%, 0.65)`;
+}
+
+function drawNoteLines(minHz, maxHz, scale, axisW){
+  // A4=440
+  const A4 = 440;
+  const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+
+  // MIDI note for frequency: n = 69 + 12*log2(f/440)
+  // We'll iterate MIDI notes in range
+  const nMin = Math.floor(69 + 12*Math.log2(minHz / A4));
+  const nMax = Math.ceil (69 + 12*Math.log2(maxHz / A4));
+
+  for(let n=nMin; n<=nMax; n++){
+    const f = A4 * Math.pow(2, (n-69)/12);
+    if(f < minHz || f > maxHz) continue;
+    const y = hzToY(f, minHz, maxHz, scale);
+    const pc = ((n % 12) + 12) % 12;
+
+    octx.strokeStyle = pitchClassColor(pc);
+    octx.lineWidth = 1;
+    octx.beginPath();
+    octx.moveTo(axisW, y+0.5);
+    octx.lineTo(W, y+0.5);
+    octx.stroke();
+
+    // Optional small label at axis edge
+    octx.fillStyle = 'rgba(230,237,243,0.55)';
+    octx.font = '11px system-ui';
+    const name = noteNames[pc] + Math.floor((n/12)-1);
+    octx.fillText(name, axisW + 6, y);
+  }
+}
+
+/* =========================
+   Spectrum plot (latest frame)
+========================= */
+function drawSpectrumPlot(){
+  const w = spectrumCanvas.width, h = spectrumCanvas.height;
+  const d = pctx.getImageData(0,0,w,h);
+  // clear to black
+  for(let i=0;i<d.data.length;i+=4){
+    d.data[i]=0; d.data[i+1]=0; d.data[i+2]=0; d.data[i+3]=255;
+  }
+  pctx.putImageData(d,0,0);
+
+  if(!audioCtx) return;
+
+  const sampleRate = audioCtx.sampleRate;
+  const minHz = parseInt(minHzN.value||"0",10);
+  const maxHz = parseInt(maxHzN.value||String(sampleRate/2),10);
+  const gainDb = parseFloat(gainN.value||"0");
+  const dyn = clamp(parseFloat(dynN.value||"80"), 20, 200);
+  const scale = scaleSel.value;
+
+  // Plot style
+  pctx.strokeStyle = 'rgba(230,237,243,0.85)';
+  pctx.lineWidth = 1;
+
+  // Map: x -> Hz (same scale option)
+  pctx.beginPath();
+  for(let px=0; px<w; px++){
+    const t = px/(w-1);
+    let hz;
+    if(scale === 'linear'){
+      hz = minHz + t*(maxHz - minHz);
+    } else {
+      hz = Math.exp(Math.log(minHz) + t*(Math.log(maxHz)-Math.log(minHz)));
+    }
+    const bin = clamp(hzToBin(hz, sampleRate), 0, BINS-1);
+    const vDb = lastSpectrum[bin] + gainDb;
+
+    // y: 0dB at top, -dyn at bottom
+    const yn = clamp((vDb - (0 - dyn)) / dyn, 0, 1);
+    const y = (1 - yn) * (h-1);
+
+    if(px===0) pctx.moveTo(px, y);
+    else pctx.lineTo(px, y);
+  }
+  pctx.stroke();
+
+  // minimal axis labels (no grid)
+  pctx.fillStyle = 'rgba(230,237,243,0.75)';
+  pctx.font = '12px system-ui';
+  pctx.fillText('dB', 8, 16);
+  const rightLabel = (maxHz>=1000) ? `${(maxHz/1000).toFixed(maxHz<10000?1:0)}kHz` : `${Math.round(maxHz)}Hz`;
+  const leftLabel  = (minHz>=1000) ? `${(minHz/1000).toFixed(minHz<10000?1:0)}kHz` : `${Math.round(minHz)}Hz`;
+  pctx.fillText(leftLabel, 8, h-10);
+  const m = pctx.measureText(rightLabel).width;
+  pctx.fillText(rightLabel, w - m - 8, h-10);
+}
+
+/* =========================
+   Axis dragging (touch/mouse)
+========================= */
+let drag = null;
+
+overlay.addEventListener('pointerdown', (e) => {
+  if(!audioCtx) return;
+  overlay.setPointerCapture(e.pointerId);
+
+  const rect = overlay.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (overlay.width / rect.width);
+  const y = (e.clientY - rect.top)  * (overlay.height / rect.height);
+
+  const axisW = 70;
+  if(x > axisW) return;
+
+  const zone = (y > H*0.75) ? 'bottom' : (y < H*0.25) ? 'top' : 'mid';
+  if(zone === 'mid') return; // middle shift left out for now
+
+  drag = { pointerId: e.pointerId, zone, y0: y, min0: parseInt(minHzN.value,10), max0: parseInt(maxHzN.value,10), scale: scaleSel.value };
+});
+
+overlay.addEventListener('pointermove', (e) => {
+  if(!drag || !audioCtx) return;
+  if(e.pointerId !== drag.pointerId) return;
+
+  const rect = overlay.getBoundingClientRect();
+  const y = (e.clientY - rect.top) * (overlay.height / rect.height);
+  const dy = y - drag.y0;
+
+  const nyq = Math.floor(audioCtx.sampleRate/2);
+
+  let minHz = drag.min0;
+  let maxHz = drag.max0;
+
+  const isLog = (drag.scale === 'log');
+  const minFloor = isLog ? 5 : 0;
+
+  if(!isLog){
+    // linear: move by fraction of span
+    const span = Math.max(1, drag.max0 - drag.min0);
+    const hzPerPx = span / (H-1);
+    const delta = Math.round(-dy * hzPerPx);
+    if(drag.zone === 'bottom') minHz = clamp(drag.min0 + delta, minFloor, maxHz-1);
+    else maxHz = clamp(drag.max0 + delta, minHz+1, nyq);
+  } else {
+    // log: multiplicative scaling per pixel (tune factor for "feel")
+    const factorPerPx = 1.006; // debug feel knob could be added later if needed
+    const mult = Math.pow(factorPerPx, -dy);
+    if(drag.zone === 'bottom'){
+      minHz = Math.round(clamp(drag.min0 * mult, minFloor, maxHz-1));
+    } else {
+      maxHz = Math.round(clamp(drag.max0 * mult, minHz+1, nyq));
+    }
+  }
+
+  minHzN.value = String(minHz);
+  maxHzN.value = String(maxHz);
+  minHzR.value = minHzN.value;
+  maxHzR.value = maxHzN.value;
+
+  enforceRange();
+  scheduleFullRedraw();
+});
+
+overlay.addEventListener('pointerup', (e) => {
+  if(drag && e.pointerId === drag.pointerId) drag = null;
+});
+overlay.addEventListener('pointercancel', (e) => {
+  if(drag && e.pointerId === drag.pointerId) drag = null;
+});
+
+/* =========================
+   Main loop + FPS
+========================= */
+let fpsT0 = nowMs();
+let fpsCount = 0;
+
+function loop(){
+  if(!analyser || !audioCtx) return;
+
+  analyser.getFloatFrequencyData(db);
+
+  // keep a copy as latest spectrum (for spectrum plot and history copies)
+  // (slice() allocates; instead copy into lastSpectrum)
+  lastSpectrum.set(db);
+
+  // append new columns (history + pixels) efficiently
+  scrollAndAppend(lastSpectrum);
+
+  // overlay & spectrum plot are cheap; overlay needed for tick labels correctness.
+  drawOverlay();
+  drawSpectrumPlot();
+
+  // FPS
+  fpsCount++;
+  const t = nowMs();
+  if(t - fpsT0 >= 500){
+    const fps = (fpsCount * 1000) / (t - fpsT0);
+    fpsEl.textContent = fps.toFixed(1);
+    fpsT0 = t;
+    fpsCount = 0;
+  }
+
+  rafId = requestAnimationFrame(loop);
+}
+
+/* =========================
+   Start/Stop
+========================= */
+function updateRangeLimits(sampleRate){
+  const nyq = Math.floor(sampleRate/2);
+  minHzR.max = String(nyq);
+  maxHzR.max = String(nyq);
+  minHzN.max = String(nyq);
+  maxHzN.max = String(nyq);
+  enforceRange();
+}
+
+async function start(){
+  if(audioCtx) return;
+
+  mediaStream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }
+  });
+
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const src = audioCtx.createMediaStreamSource(mediaStream);
+
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = FFT_SIZE;
+  analyser.smoothingTimeConstant = SMOOTHING;
+  analyser.minDecibels = -140;
+  analyser.maxDecibels = 0;
+
+  src.connect(analyser);
+
+  srEl.textContent = `${audioCtx.sampleRate} Hz`;
+  fftEl.textContent = `${FFT_SIZE}`;
+
+  updateRangeLimits(audioCtx.sampleRate);
+
+  btnStart.disabled = true;
+  btnStop.disabled = false;
+
+  // Ensure history/pixels consistent with current settings
+  scheduleFullRedraw(true);
+  rafId = requestAnimationFrame(loop);
+}
+
+function stop(){
+  if(rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+
+  if(mediaStream){
+    for(const t of mediaStream.getTracks()) t.stop();
+    mediaStream = null;
+  }
+  if(audioCtx){
+    audioCtx.close();
+    audioCtx = null;
+  }
+  analyser = null;
+
+  btnStart.disabled = false;
+  btnStop.disabled = true;
+
+  srEl.textContent = '-';
+  fftEl.textContent = '-';
+  fpsEl.textContent = '-';
+  drawOverlay();
+  drawSpectrumPlot();
+}
+
+btnStart.addEventListener('click', () => start().catch(err => {
+  console.error(err);
+  alert('Could not start microphone: ' + err.message);
+}));
+btnStop.addEventListener('click', stop);
+btnClear.addEventListener('click', clearAll);
+
+// init
+rangeLabel.textContent = `${minHzN.value}–${maxHzN.value} Hz`;
+clearAll();
+
+/* =========================
+   PWA: service worker register
+========================= */
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
