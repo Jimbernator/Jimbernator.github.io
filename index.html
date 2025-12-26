@@ -1,0 +1,642 @@
+<!-- index.html -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#0b0f14" />
+  <link rel="manifest" href="manifest.json" />
+  <title>Live Spectrogram (history + axis drag + log + notes)</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin:0; padding:14px;
+      font-family: system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      background:#0b0f14; color:#e6edf3;
+      -webkit-user-select:none; user-select:none;
+      overscroll-behavior: none;
+    }
+    .row { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-start; }
+    .panel { background:#0f1621; border:1px solid #1f2a3a; border-radius:12px; padding:12px; }
+    .hint { font-size:12px; color:#b7c3d1; line-height:1.35; }
+    label { display:grid; gap:6px; font-size:12px; color:#b7c3d1; }
+    input[type="range"] { width:260px; }
+    input[type="number"], select {
+      width:120px; padding:6px 8px; border-radius:8px;
+      border:1px solid #273448; background:#0b0f14; color:#e6edf3;
+    }
+    button {
+      padding:8px 12px; border-radius:10px;
+      border:1px solid #2a3a53; background:#121b28; color:#e6edf3; cursor:pointer;
+    }
+    button:hover { background:#162236; }
+    .kvs { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:#b7c3d1; }
+    .kvs b { color:#e6edf3; }
+    .stack { position:relative; width: min(100%, 1400px); }
+    canvas { display:block; width:100%; border-radius:12px; border:1px solid #1f2a3a; background:#05070a; }
+    #overlay {
+      position:absolute; left:0; top:0;
+      touch-action: none; /* critical: stop page scroll/zoom during drag */
+      -webkit-touch-callout: none;
+    }
+    .sep { height:1px; background:#1f2a3a; margin:10px 0; }
+    /* phone portrait: stack plots vertically */
+    .plots { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-start; }
+    .plotA { flex: 1 1 900px; }
+    .plotB { flex: 1 1 420px; max-width: 520px; }
+    @media (max-width: 900px) {
+      .plotB { max-width: none; width: min(100%, 1400px); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="row">
+  <div class="panel">
+    <div class="row" style="align-items:center;">
+      <button id="btnStart">Start mic</button>
+      <button id="btnStop" disabled>Stop</button>
+      <button id="btnClear">Clear</button>
+
+      <label style="margin-left:8px;">
+        Scale
+        <select id="scaleSel">
+          <option value="linear" selected>Linear Hz</option>
+          <option value="log">Log Hz</option>
+        </select>
+      </label>
+
+      <label>
+        Notes
+        <select id="notesSel">
+          <option value="off" selected>Off</option>
+          <option value="on">On</option>
+        </select>
+      </label>
+
+      <label>
+        Auto dB range (debug)
+        <select id="autoDbSel">
+          <option value="on" selected>On</option>
+          <option value="off">Off</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="kvs">
+      <div>SR: <b id="sr">-</b></div>
+      <div>FFT: <b id="fft">-</b></div>
+      <div>FPS: <b id="fps">-</b></div>
+      <div>Range: <b id="rangeLabel">-</b></div>
+      <div>dB: <b id="dbLabel">-</b></div>
+    </div>
+
+    <div class="hint" style="margin-top:10px;">
+      Axis drag model: you “grab” a frequency at touch-down and it stays under your finger while you move.
+      Dragging a lower-frequency line up into the top zone will reduce the top bound accordingly (your example).
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <label>
+        Bottom Hz
+        <div class="row">
+          <input id="minHz" type="number" min="0" step="1" value="0">
+          <input id="minHzRange" type="range" min="0" max="24000" value="0">
+        </div>
+      </label>
+
+      <label>
+        Top Hz
+        <div class="row">
+          <input id="maxHz" type="number" min="1" step="1" value="8000">
+          <input id="maxHzRange" type="range" min="1" max="24000" value="8000">
+        </div>
+      </label>
+
+      <label>
+        Gain (dB lift)
+        <div class="row">
+          <input id="gain" type="number" step="1" value="0">
+          <input id="gainRange" type="range" min="-60" max="60" value="0">
+        </div>
+      </label>
+
+      <label>
+        Dynamic range (dB)
+        <div class="row">
+          <input id="dyn" type="number" min="20" max="180" step="1" value="100">
+          <input id="dynRange" type="range" min="20" max="180" value="100">
+        </div>
+      </label>
+
+      <label>
+        Ceiling (dB, debug)
+        <div class="row">
+          <input id="ceilDb" type="number" min="-60" max="20" step="1" value="0">
+          <input id="ceilDbRange" type="range" min="-60" max="20" value="0">
+        </div>
+      </label>
+
+      <label>
+        Scroll speed (px/col)
+        <div class="row">
+          <input id="speed" type="number" min="1" max="8" step="1" value="1">
+          <input id="speedRange" type="range" min="1" max="8" value="1">
+        </div>
+      </label>
+
+      <label>
+        Redraw throttle (ms)
+        <div class="row">
+          <input id="redrawMs" type="number" min="0" max="500" step="10" value="60">
+          <input id="redrawMsRange" type="range" min="0" max="500" step="10" value="60">
+        </div>
+      </label>
+    </div>
+
+    <div class="hint" style="margin-top:10px;">
+      If the spectrogram looks blank: set Auto dB range = Off, then try Gain +30 and Dynamic range 140.
+    </div>
+  </div>
+</div>
+
+<div class="plots" style="margin-top:12px;">
+  <div class="panel plotA" style="padding:12px;">
+    <div class="stack">
+      <canvas id="spec" width="1400" height="520"></canvas>
+      <canvas id="overlay" width="1400" height="520"></canvas>
+    </div>
+  </div>
+
+  <div class="panel plotB" style="padding:12px;">
+    <canvas id="spectrum" width="520" height="520"></canvas>
+    <div class="hint" style="margin-top:8px;">Spectrum (latest frame): dB vs Hz (shares linear/log).</div>
+  </div>
+</div>
+
+<script>
+/* =========================
+   Utilities
+========================= */
+function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+function nowMs(){ return performance.now(); }
+
+const TURBO_LUT = (() => {
+  function turbo(t){
+    const r = 34.61 + t*(1172.33 + t*(-10793.56 + t*(33300.12 + t*(-38394.49 + t*14825.05))));
+    const g = 23.31 + t*(557.33 + t*(1225.33 + t*(-3574.96 + t*(2073.03 + t* -311.73))));
+    const b = 27.2  + t*(3211.1 + t*(-15327.97 + t*(27814.0  + t*(-22569.18 + t*6838.66))));
+    return [clamp(Math.round(r),0,255), clamp(Math.round(g),0,255), clamp(Math.round(b),0,255)];
+  }
+  const lut = new Array(256);
+  for(let i=0;i<256;i++) lut[i] = turbo(i/255);
+  return lut;
+})();
+function turboColorByte(v){ return TURBO_LUT[v|0]; }
+
+function linkNumberAndRange(numEl, rangeEl, onChange){
+  const syncFromNum = () => { rangeEl.value = numEl.value; onChange?.(); };
+  const syncFromRange = () => { numEl.value = rangeEl.value; onChange?.(); };
+  numEl.addEventListener('input', syncFromNum);
+  rangeEl.addEventListener('input', syncFromRange);
+}
+
+/* =========================
+   DOM
+========================= */
+const spec = document.getElementById('spec');
+const overlay = document.getElementById('overlay');
+const spectrumCanvas = document.getElementById('spectrum');
+
+const sctx = spec.getContext('2d', { alpha:false });
+const octx = overlay.getContext('2d');
+const pctx = spectrumCanvas.getContext('2d', { alpha:false });
+
+const btnStart = document.getElementById('btnStart');
+const btnStop  = document.getElementById('btnStop');
+const btnClear = document.getElementById('btnClear');
+
+const minHzN = document.getElementById('minHz');
+const maxHzN = document.getElementById('maxHz');
+const minHzR = document.getElementById('minHzRange');
+const maxHzR = document.getElementById('maxHzRange');
+
+const gainN = document.getElementById('gain');
+const gainR = document.getElementById('gainRange');
+
+const dynN = document.getElementById('dyn');
+const dynR = document.getElementById('dynRange');
+
+const ceilDbN = document.getElementById('ceilDb');
+const ceilDbR = document.getElementById('ceilDbRange');
+
+const speedN = document.getElementById('speed');
+const speedR = document.getElementById('speedRange');
+
+const redrawMsN = document.getElementById('redrawMs');
+const redrawMsR = document.getElementById('redrawMsRange');
+
+const scaleSel = document.getElementById('scaleSel');
+const notesSel = document.getElementById('notesSel');
+const autoDbSel = document.getElementById('autoDbSel');
+
+const srEl = document.getElementById('sr');
+const fftEl = document.getElementById('fft');
+const fpsEl = document.getElementById('fps');
+const rangeLabel = document.getElementById('rangeLabel');
+const dbLabel = document.getElementById('dbLabel');
+
+linkNumberAndRange(minHzN, minHzR, () => { enforceRange(); scheduleFullRedraw(); });
+linkNumberAndRange(maxHzN, maxHzR, () => { enforceRange(); scheduleFullRedraw(); });
+linkNumberAndRange(gainN, gainR, scheduleFullRedraw);
+linkNumberAndRange(dynN, dynR, scheduleFullRedraw);
+linkNumberAndRange(ceilDbN, ceilDbR, scheduleFullRedraw);
+linkNumberAndRange(speedN, speedR); // no full redraw needed
+linkNumberAndRange(redrawMsN, redrawMsR);
+
+scaleSel.addEventListener('change', () => { enforceRange(); scheduleFullRedraw(true); });
+notesSel.addEventListener('change', () => { drawOverlay(); });
+autoDbSel.addEventListener('change', () => { scheduleFullRedraw(true); });
+
+/* =========================
+   Audio
+========================= */
+let audioCtx = null;
+let analyser = null;
+let mediaStream = null;
+let rafId = null;
+
+const FFT_SIZE = 4096;
+const BINS = FFT_SIZE/2;
+const db = new Float32Array(BINS);
+
+/* =========================
+   History + pixel buffer
+========================= */
+const W = spec.width, H = spec.height;
+const img = sctx.getImageData(0,0,W,H);
+for(let i=0;i<img.data.length;i+=4) img.data[i+3] = 255;
+
+let history = new Array(W);
+for(let x=0;x<W;x++) history[x] = null;
+
+let lastSpectrum = new Float32Array(BINS);
+
+/* =========================
+   Mapping
+========================= */
+function hzToBin(hz, sr){ return Math.round(hz * FFT_SIZE / sr); }
+function binToHz(bin, sr){ return bin * sr / FFT_SIZE; }
+
+function mapYtoHz(y, minHz, maxHz, scale){
+  const t = 1 - (y/(H-1)); // 0 bottom, 1 top
+  if(scale === 'linear') return minHz + t*(maxHz - minHz);
+  const a = Math.log(minHz), b = Math.log(maxHz);
+  return Math.exp(a + t*(b - a));
+}
+function hzToY(hz, minHz, maxHz, scale){
+  if(scale === 'linear'){
+    const t = (hz - minHz) / (maxHz - minHz);
+    return (1 - t) * (H-1);
+  }
+  const t = (Math.log(hz) - Math.log(minHz)) / (Math.log(maxHz) - Math.log(minHz));
+  return (1 - t) * (H-1);
+}
+
+/* =========================
+   Range enforcement
+========================= */
+function enforceRange(){
+  if(!audioCtx) {
+    rangeLabel.textContent = `${minHzN.value}–${maxHzN.value} Hz`;
+    return;
+  }
+  const nyq = Math.floor(audioCtx.sampleRate/2);
+  const isLog = (scaleSel.value === 'log');
+  const minFloor = isLog ? 5 : 0;
+
+  let minv = clamp(parseInt(minHzN.value||"0",10), minFloor, nyq);
+  let maxv = clamp(parseInt(maxHzN.value||String(nyq),10), minFloor+1, nyq);
+  if(maxv <= minv) maxv = Math.min(nyq, minv+1);
+
+  minHzN.value = String(minv);
+  maxHzN.value = String(maxv);
+  minHzR.value = minHzN.value;
+  maxHzR.value = maxHzN.value;
+
+  rangeLabel.textContent = `${minHzN.value}–${maxHzN.value} Hz`;
+}
+function updateRangeLimits(sr){
+  const nyq = Math.floor(sr/2);
+  minHzR.max = String(nyq);
+  maxHzR.max = String(nyq);
+  minHzN.max = String(nyq);
+  maxHzN.max = String(nyq);
+  enforceRange();
+}
+
+/* =========================
+   dB normalization (manual + auto)
+========================= */
+function percentileOfSorted(arr, p){
+  const idx = clamp(Math.round((p/100)*(arr.length-1)), 0, arr.length-1);
+  return arr[idx];
+}
+function computeAutoDbWindow(spectrumDb){
+  // Fast-ish debug auto window: sample bins and take percentiles
+  const sampleStep = 4; // debug feel knob: lower = more accurate, higher = faster
+  const samples = [];
+  samples.length = 0;
+  for(let i=0;i<spectrumDb.length;i+=sampleStep) samples.push(spectrumDb[i]);
+  samples.sort((a,b)=>a-b);
+  const lo = percentileOfSorted(samples, 10);
+  const hi = percentileOfSorted(samples, 98);
+  // keep a minimum span so it doesn't collapse
+  const span = Math.max(40, hi - lo);
+  const ceil = hi;           // "top of colormap"
+  const floor = hi - span;   // "bottom of colormap"
+  return { floor, ceil };
+}
+
+/* =========================
+   Rendering
+========================= */
+function renderColumn(x, spectrumDb){
+  const sr = audioCtx.sampleRate;
+  const minHz = parseInt(minHzN.value||"0",10);
+  const maxHz = parseInt(maxHzN.value||String(sr/2),10);
+  const scale = scaleSel.value;
+
+  const gainDb = parseFloat(gainN.value||"0");
+  const dyn = clamp(parseFloat(dynN.value||"100"), 20, 240);
+  const ceilDb = parseFloat(ceilDbN.value||"0");
+
+  let floorDb = (ceilDb - dyn);
+  let topDb = ceilDb;
+
+  if(autoDbSel.value === 'on'){
+    const w = computeAutoDbWindow(spectrumDb);
+    floorDb = w.floor + gainDb;
+    topDb = w.ceil + gainDb;
+  } else {
+    floorDb = floorDb + gainDb;
+    topDb = topDb + gainDb;
+  }
+
+  dbLabel.textContent = `${floorDb.toFixed(0)}..${topDb.toFixed(0)} dB`;
+
+  const d = img.data;
+  const denom = Math.max(1e-6, (topDb - floorDb));
+  for(let y=0;y<H;y++){
+    const hz = mapYtoHz(y, minHz, maxHz, scale);
+    const bin = clamp(hzToBin(hz, sr), 0, BINS-1);
+    const vDb = spectrumDb[bin] + gainDb;
+
+    const norm = clamp((vDb - floorDb) / denom, 0, 1);
+    const c = turboColorByte(Math.round(norm*255));
+
+    const idx = (y*W + x) * 4;
+    d[idx] = c[0]; d[idx+1] = c[1]; d[idx+2] = c[2]; d[idx+3] = 255;
+  }
+}
+
+function scrollAndAppend(latestDb){
+  const sp = clamp(parseInt(speedN.value||"1",10), 1, 32);
+  const d = img.data;
+  const rowStride = W*4;
+  const shiftBytes = sp*4;
+
+  for(let y=0;y<H;y++){
+    const rowStart = y*rowStride;
+    d.copyWithin(rowStart, rowStart + shiftBytes, rowStart + rowStride);
+    const tailStart = rowStart + (W - sp)*4;
+    for(let p=tailStart; p<rowStart+rowStride; p+=4){
+      d[p]=0; d[p+1]=0; d[p+2]=0; d[p+3]=255;
+    }
+  }
+
+  history.copyWithin(0, sp);
+  for(let i=0;i<sp;i++){
+    history[W - sp + i] = latestDb.slice(); // copy for later full redraw
+  }
+
+  for(let i=0;i<sp;i++){
+    renderColumn(W - sp + i, latestDb);
+  }
+
+  sctx.putImageData(img, 0, 0);
+}
+
+let redrawTimer = null;
+let lastRedrawAt = 0;
+function scheduleFullRedraw(force=false){
+  if(!audioCtx) { drawOverlay(); return; }
+  const throttle = clamp(parseInt(redrawMsN.value||"60",10), 0, 2000);
+  const t = nowMs();
+  if(force || throttle === 0){
+    fullRedraw();
+    return;
+  }
+  if(t - lastRedrawAt >= throttle){
+    fullRedraw();
+    return;
+  }
+  if(redrawTimer) clearTimeout(redrawTimer);
+  redrawTimer = setTimeout(() => {
+    redrawTimer = null;
+    fullRedraw();
+  }, throttle);
+}
+
+function fullRedraw(){
+  if(!audioCtx) return;
+  enforceRange();
+
+  const d = img.data;
+  for(let x=0;x<W;x++){
+    const col = history[x];
+    if(!col){
+      for(let y=0;y<H;y++){
+        const idx = (y*W + x)*4;
+        d[idx]=0; d[idx+1]=0; d[idx+2]=0; d[idx+3]=255;
+      }
+    } else {
+      renderColumn(x, col);
+    }
+  }
+  sctx.putImageData(img,0,0);
+  lastRedrawAt = nowMs();
+  drawOverlay();
+  drawSpectrumPlot();
+}
+
+function clearAll(){
+  const d = img.data;
+  for(let i=0;i<d.length;i+=4){
+    d[i]=0; d[i+1]=0; d[i+2]=0; d[i+3]=255;
+  }
+  sctx.putImageData(img,0,0);
+  for(let x=0;x<W;x++) history[x] = null;
+  drawOverlay();
+  drawSpectrumPlot();
+  dbLabel.textContent = '-';
+}
+
+/* =========================
+   Overlay (Hz axis + optional notes). No grid.
+========================= */
+function pitchClassColor(pc){
+  const hue = (pc / 12) * 360;
+  return `hsla(${hue}, 90%, 60%, 0.65)`;
+}
+
+function drawNoteLines(minHz, maxHz, scale, axisW){
+  const A4 = 440;
+  const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  const nMin = Math.floor(69 + 12*Math.log2(minHz / A4));
+  const nMax = Math.ceil (69 + 12*Math.log2(maxHz / A4));
+
+  for(let n=nMin; n<=nMax; n++){
+    const f = A4 * Math.pow(2, (n-69)/12);
+    if(f < minHz || f > maxHz) continue;
+    const y = hzToY(f, minHz, maxHz, scale);
+    const pc = ((n % 12) + 12) % 12;
+
+    octx.strokeStyle = pitchClassColor(pc);
+    octx.lineWidth = 1;
+    octx.beginPath();
+    octx.moveTo(axisW, y+0.5);
+    octx.lineTo(W, y+0.5);
+    octx.stroke();
+
+    octx.fillStyle = 'rgba(230,237,243,0.55)';
+    octx.font = '11px system-ui';
+    const name = noteNames[pc] + Math.floor((n/12)-1);
+    octx.fillText(name, axisW + 6, y);
+  }
+}
+
+function drawOverlay(){
+  const w = overlay.width, h = overlay.height;
+  octx.clearRect(0,0,w,h);
+
+  const axisW = 74;
+  const pad = 8;
+
+  octx.fillStyle = 'rgba(15,22,33,0.85)';
+  octx.fillRect(0,0,axisW,h);
+
+  octx.strokeStyle = 'rgba(230,237,243,0.55)';
+  octx.lineWidth = 1;
+  octx.beginPath();
+  octx.moveTo(axisW-0.5, 0);
+  octx.lineTo(axisW-0.5, h);
+  octx.stroke();
+
+  octx.fillStyle = 'rgba(230,237,243,0.8)';
+  octx.font = '12px system-ui';
+  octx.textBaseline = 'middle';
+  octx.fillText('Hz', pad, 14);
+
+  if(!audioCtx) return;
+
+  const sr = audioCtx.sampleRate;
+  const minHz = parseInt(minHzN.value||"0",10);
+  const maxHz = parseInt(maxHzN.value||String(sr/2),10);
+  const scale = scaleSel.value;
+
+  let ticks = [];
+  if(scale === 'linear'){
+    const span = maxHz - minHz;
+    const targetTicks = 6;
+    const rawStep = span / targetTicks;
+    const pow10 = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const steps = [1,2,5,10].map(m => m*pow10);
+    let step = steps[0];
+    for(const s of steps) if(Math.abs(s-rawStep) < Math.abs(step-rawStep)) step = s;
+    const start = Math.ceil(minHz/step)*step;
+    for(let f=start; f<=maxHz+1e-9; f+=step) ticks.push(f);
+  } else {
+    const lo = Math.max(minHz, 1);
+    const hi = Math.max(maxHz, lo+1);
+    const d0 = Math.floor(Math.log10(lo));
+    const d1 = Math.ceil(Math.log10(hi));
+    const bases = [1,2,5];
+    for(let d=d0; d<=d1; d++){
+      const decade = Math.pow(10,d);
+      for(const b of bases){
+        const f = b*decade;
+        if(f>=lo && f<=hi) ticks.push(f);
+      }
+    }
+  }
+
+  for(const f of ticks){
+    const y = hzToY(f, minHz, maxHz, scale);
+    if(y < 0 || y > h) continue;
+
+    octx.strokeStyle = 'rgba(230,237,243,0.45)';
+    octx.beginPath();
+    octx.moveTo(axisW-10, y+0.5);
+    octx.lineTo(axisW-1, y+0.5);
+    octx.stroke();
+
+    const label = (f >= 1000) ? `${(f/1000).toFixed(f<10000?1:0)}k` : `${Math.round(f)}`;
+    octx.fillStyle = 'rgba(230,237,243,0.85)';
+    octx.fillText(label, pad, y);
+  }
+
+  if(notesSel.value === 'on'){
+    drawNoteLines(minHz, maxHz, scale, axisW);
+  }
+}
+
+/* =========================
+   Spectrum plot
+========================= */
+function drawSpectrumPlot(){
+  const w = spectrumCanvas.width, h = spectrumCanvas.height;
+  // clear
+  pctx.fillStyle = '#000';
+  pctx.fillRect(0,0,w,h);
+
+  if(!audioCtx) return;
+
+  const sr = audioCtx.sampleRate;
+  const minHz = parseInt(minHzN.value||"0",10);
+  const maxHz = parseInt(maxHzN.value||String(sr/2),10);
+  const scale = scaleSel.value;
+
+  const gainDb = parseFloat(gainN.value||"0");
+  const dyn = clamp(parseFloat(dynN.value||"100"), 20, 240);
+  const ceilDb = parseFloat(ceilDbN.value||"0");
+
+  let floorDb = (ceilDb - dyn);
+  let topDb = ceilDb;
+
+  if(autoDbSel.value === 'on'){
+    const wdb = computeAutoDbWindow(lastSpectrum);
+    floorDb = wdb.floor + gainDb;
+    topDb = wdb.ceil + gainDb;
+  } else {
+    floorDb = floorDb + gainDb;
+    topDb = topDb + gainDb;
+  }
+  const denom = Math.max(1e-6, (topDb - floorDb));
+
+  pctx.strokeStyle = 'rgba(230,237,243,0.85)';
+  pctx.lineWidth = 1;
+  pctx.beginPath();
+
+  for(let px=0; px<w; px++){
+    const t = px/(w-1);
+    let hz;
+    if(scale === 'linear'){
+      hz = minHz + t*(maxHz - minHz);
+    } else {
+      hz = Math.exp(Math.log(minHz) + t*(Math.log(maxHz)-Math.log(minHz)));
+    }
