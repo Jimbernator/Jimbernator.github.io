@@ -47,9 +47,13 @@ Touch dragging no longer scrolls the page (via touch-action:none and event handl
 Spectrogram is scaled large in CSS for phones (not “tiny”).
 Debug overlay tint option to make it obvious what layer is on top / what is obscuring what.
 
-Items noted for future work
+
+
+
+
+# Items noted for future work
 Musical notes stability
-Clamp note rendering to ≥ 27.5 Hz (A0) to avoid “infinite notes” behaviour as frequency approaches 0 Hz.
+✅ Clamp note rendering to ≥ 27.5 Hz (A0) to avoid “infinite notes” behaviour as frequency approaches 0 Hz.
 Also ensure log scale never attempts log(0); minimum already enforced for log, but note rendering should independently clamp.
 
 dB interaction parity with Hz interaction
@@ -58,7 +62,7 @@ Drag near top adjusts dB top
 Drag near bottom adjusts dB bottom
 Same “grab-a-value” model as Hz axis
 
-Show current dB limits on the spectrum plot for clarity.
+✅ Show current dB limits on the spectrum plot for clarity.
 
 Offline/PWA validation
 Test behaviour offline after first load.
@@ -66,23 +70,23 @@ Decide whether to reintroduce a service worker once UI stabilizes.
 Verify microphone permissions and offline mode across Android Chrome and iOS Safari/PWA constraints.
 
 Fullscreen
-Add a fullscreen toggle (using the Fullscreen API) for the spectrogram (and possibly “spectrogram only” mode).
+✅ Add a fullscreen toggle (using the Fullscreen API) for the spectrogram (and possibly “spectrogram only” mode).
 
 UI cleanup / production mode
 Move “debug” sliders into a collapsible menu or settings panel.
 Keep only high-level controls visible by default (Hz range, dB range, linear/log, notes toggle, start/stop).
-Increase axis panel width (roughly 2×) for readability and easier touch targeting.
+✅ Increase axis panel width (roughly 2×) for readability and easier touch targeting.
 Fix axis/note label readability: current text is squeezed; address via wider axis strip and/or larger font with layout that doesn’t compress.
 
 Desktop layout refinement
-Spectrum plot does not currently fill available width in desktop mode; revise responsive layout so spectrum can expand or reflow more naturally.
+✅ Spectrum plot does not currently fill available width in desktop mode; revise responsive layout so spectrum can expand or reflow more naturally.
 
 Note overlay enhancements
 Render musical notes on the spectrum plot as well (same colours, labels C/D/E…).
 Keep note colour consistent across spectrogram + spectrum…. Actually they were there just too small to see…
 
 Stop behavior
-“Stop” should stop acquisition but not clear existing spectrogram/spectrum visuals.
+✅ “Stop” should stop acquisition but not clear existing spectrogram/spectrum visuals.
 
 Cursor/inspection interaction
 When the user touches/presses on the spectrogram:
