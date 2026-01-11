@@ -75,6 +75,7 @@
       height: min(70vh, 680px);
       border-radius:12px; border:1px solid #1f2a3a;
       background:#05070a;
+      touch-action:none;
     }
   </style>
 </head>
@@ -309,6 +310,8 @@
   for(let x=0;x<W;x++) history[x] = null;
 
   let lastSpectrum = new Float32Array(BINS);
+  let inspectIndex = null;
+  let inspectPointer = null;
 
   // Mapping
   function hzToBin(hz, sr){ return Math.round(hz * FFT_SIZE / sr); }
@@ -607,6 +610,20 @@
     if(notesSel.value === 'on'){
       drawNoteLines(minHz, maxHz, scale, axisW);
     }
+
+    if(inspectIndex !== null){
+      const x = clamp(inspectIndex, axisW, W-1);
+      octx.strokeStyle = 'rgba(230,237,243,0.7)';
+      octx.lineWidth = 1;
+      octx.beginPath();
+      octx.moveTo(x + 0.5, 0);
+      octx.lineTo(x + 0.5, h);
+      octx.stroke();
+      octx.fillStyle = 'rgba(230,237,243,0.8)';
+      octx.font = '11px system-ui';
+      octx.textBaseline = 'top';
+      octx.fillText('inspect', x + 6, 6);
+    }
   }
 
   function drawSpectrumPlot(){
@@ -629,6 +646,21 @@
     }
     const denom = Math.max(1e-6, (dbTop - dbBottom));
 
+    const axisW = 70;
+    pctx.fillStyle = 'rgba(15,22,33,0.7)';
+    pctx.fillRect(0,0,axisW,h);
+    pctx.strokeStyle = 'rgba(230,237,243,0.35)';
+    pctx.beginPath();
+    pctx.moveTo(axisW-0.5, 0);
+    pctx.lineTo(axisW-0.5, h);
+    pctx.stroke();
+    pctx.fillStyle = 'rgba(230,237,243,0.8)';
+    pctx.font = '12px system-ui';
+    pctx.textBaseline = 'top';
+    pctx.fillText('dB', 8, 6);
+    pctx.font = '10px system-ui';
+    pctx.fillText('drag', 8, 22);
+
     pctx.strokeStyle = 'rgba(230,237,243,0.25)';
     pctx.beginPath();
     pctx.moveTo(0, 0.5);
@@ -643,7 +675,20 @@
     pctx.textBaseline = 'bottom';
     pctx.fillText(`${Math.round(dbBottom)} dB`, 6, h-4);
 
-    const spectrum = (inspectIndex !== null && history[inspectIndex]) ? history[inspectIndex] : lastSpectrum;
+    let spectrum = lastSpectrum;
+    if(inspectIndex !== null){
+      let found = history[inspectIndex];
+      if(!found){
+        for(let r=1; r<W; r++){
+          const a = inspectIndex - r;
+          const b = inspectIndex + r;
+          if(a >= 0 && history[a]){ found = history[a]; break; }
+          if(b < W && history[b]){ found = history[b]; break; }
+          if(a < 0 && b >= W) break;
+        }
+      }
+      if(found) spectrum = found;
+    }
 
     pctx.strokeStyle = 'rgba(230,237,243,0.85)';
     pctx.lineWidth = 1;
@@ -705,8 +750,6 @@
 
   // Axis dragging (Hz only), grab-a-frequency model + spectrogram inspect
   let drag = null;
-  let inspectIndex = null;
-  let inspectPointer = null;
   overlay.addEventListener('pointerdown', (e) => {
     if(!audioCtx) return;
     e.preventDefault();
@@ -721,6 +764,7 @@
       inspectIndex = clamp(Math.round(x), 0, W-1);
       inspectPointer = e.pointerId;
       drawSpectrumPlot();
+      drawOverlay();
       return;
     }
 
@@ -742,6 +786,7 @@
       const x = (e.clientX - rect.left) * (overlay.width / rect.width);
       inspectIndex = clamp(Math.round(x), 0, W-1);
       drawSpectrumPlot();
+      drawOverlay();
       return;
     }
     if(!drag || e.pointerId !== drag.pointerId) return;
@@ -800,6 +845,7 @@
       inspectPointer = null;
       inspectIndex = null;
       drawSpectrumPlot();
+      drawOverlay();
     }
   }, { passive:false });
   overlay.addEventListener('pointercancel', (e) => {
@@ -808,6 +854,7 @@
       inspectPointer = null;
       inspectIndex = null;
       drawSpectrumPlot();
+      drawOverlay();
     }
   }, { passive:false });
 
@@ -829,6 +876,8 @@
 
     if(autoDbSel.value === 'on'){
       autoDbSel.value = 'off';
+      enforceDbRange();
+      scheduleFullRedraw();
     }
 
     const dbBottom = parseFloat(dbBottomN.value||"-120");

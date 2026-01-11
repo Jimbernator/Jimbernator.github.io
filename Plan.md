@@ -57,7 +57,7 @@ Musical notes stability
 ✅Also ensure log scale never attempts log(0); minimum already enforced for log, but note rendering should independently clamp.
 
 dB interaction parity with Hz interaction
-✅ Add draggable dB axis control on the spectrum plot:
+Add draggable dB axis control on the spectrum plot:
 Drag near top adjusts dB top
 Drag near bottom adjusts dB bottom
 Same “grab-a-value” model as Hz axis
@@ -88,7 +88,7 @@ Keep note colour consistent across spectrogram + spectrum…. Actually they were
 Stop behavior
 ✅ “Stop” should stop acquisition but not clear existing spectrogram/spectrum visuals.
 
-✅ Cursor/inspection interaction
+Cursor/inspection interaction
 When the user touches/presses on the spectrogram:
 Spectrum plot should display the spectrum for the corresponding time column (frame) under the finger.
 On release, spectrum returns to the latest frame.
