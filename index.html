@@ -38,12 +38,17 @@
     .plotB{ flex: 1 1 520px; }
     @media (max-width: 900px){ .plotB{ max-width:none; width:min(100%, 1400px);} }
 
-    .stack{ position:relative; width:min(100%, 1600px); }
+    .stack{
+      position:relative;
+      width:min(100%, 1600px);
+      aspect-ratio: 16 / 9;
+      max-height: 70vh;
+    }
 
     /* IMPORTANT: background only on the spectrogram canvas, NOT on the overlay */
     #spec{
       display:block; width:100%;
-      height: min(70vh, 680px);        /* make it big, especially on phones */
+      height:100%;
       border-radius:12px; border:1px solid #1f2a3a;
       background:#05070a;
     }
@@ -51,7 +56,7 @@
       position:absolute; left:0; top:0;
       display:block;
       width:100%;
-      height: min(70vh, 680px);
+      height:100%;
       border-radius:12px;
       /* transparent by default; do NOT set background */
       touch-action:none;
@@ -72,7 +77,9 @@
 
     #spectrum{
       display:block; width:100%;
-      height: min(70vh, 680px);
+      height:auto;
+      aspect-ratio: 1 / 1;
+      max-height: 70vh;
       border-radius:12px; border:1px solid #1f2a3a;
       background:#05070a;
       touch-action:none;
@@ -620,10 +627,6 @@
       octx.moveTo(x + 0.5, 0);
       octx.lineTo(x + 0.5, h);
       octx.stroke();
-      octx.fillStyle = 'rgba(230,237,243,0.8)';
-      octx.font = '11px system-ui';
-      octx.textBaseline = 'top';
-      octx.fillText('inspect', x + 6, 6);
     }
   }
 
