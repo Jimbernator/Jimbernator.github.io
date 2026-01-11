@@ -35,7 +35,7 @@
 
     .plots{ display:flex; gap:14px; flex-wrap:wrap; align-items:flex-start; margin-top:12px; }
     .plotA{ flex: 1 1 980px; }
-    .plotB{ flex: 1 1 420px; max-width:520px; }
+    .plotB{ flex: 1 1 520px; }
     @media (max-width: 900px){ .plotB{ max-width:none; width:min(100%, 1400px);} }
 
     .stack{ position:relative; width:min(100%, 1600px); }
@@ -57,6 +57,18 @@
       touch-action:none;
       -webkit-touch-callout:none;
     }
+    #stack:fullscreen,
+    #stack:-webkit-full-screen{
+      width:100%;
+      height:100%;
+    }
+    #stack:fullscreen #spec,
+    #stack:fullscreen #overlay,
+    #stack:-webkit-full-screen #spec,
+    #stack:-webkit-full-screen #overlay{
+      width:100%;
+      height:100%;
+    }
 
     #spectrum{
       display:block; width:100%;
@@ -74,6 +86,7 @@
       <button id="btnStart">Start mic</button>
       <button id="btnStop" disabled>Stop</button>
       <button id="btnClear">Clear</button>
+      <button id="btnFullscreen">Fullscreen</button>
 
       <label style="margin-left:8px;">
         Scale
@@ -238,6 +251,7 @@
   const spec = must('spec');
   const overlay = must('overlay');
   const spectrumCanvas = must('spectrum');
+  const stack = must('stack');
 
   const sctx = spec.getContext('2d', { alpha:false });
   const octx = overlay.getContext('2d'); // transparent overlay
@@ -246,6 +260,7 @@
   const btnStart = must('btnStart');
   const btnStop  = must('btnStop');
   const btnClear = must('btnClear');
+  const btnFullscreen = must('btnFullscreen');
 
   const minHzN = must('minHz');
   const maxHzN = must('maxHz');
@@ -288,6 +303,7 @@
   const W = spec.width, H = spec.height;
   const img = sctx.getImageData(0,0,W,H);
   for(let i=0;i<img.data.length;i+=4) img.data[i+3] = 255;
+  const AXIS_W = 120;
 
   let history = new Array(W);
   for(let x=0;x<W;x++) history[x] = null;
@@ -471,6 +487,8 @@
     for(let i=0;i<d.length;i+=4){ d[i]=0; d[i+1]=0; d[i+2]=0; d[i+3]=255; }
     sctx.putImageData(img,0,0);
     for(let x=0;x<W;x++) history[x] = null;
+    pctx.fillStyle = '#000';
+    pctx.fillRect(0,0,spectrumCanvas.width,spectrumCanvas.height);
     drawOverlay();
     drawSpectrumPlot();
   }
@@ -483,7 +501,9 @@
   function drawNoteLines(minHz, maxHz, scale, axisW){
     const A4 = 440;
     const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-    const nMin = Math.floor(69 + 12*Math.log2(minHz / A4));
+    const noteMinHz = Math.max(minHz, 27.5);
+    if(maxHz < noteMinHz) return;
+    const nMin = Math.floor(69 + 12*Math.log2(noteMinHz / A4));
     const nMax = Math.ceil (69 + 12*Math.log2(maxHz / A4));
     for(let n=nMin; n<=nMax; n++){
       const f = A4 * Math.pow(2, (n-69)/12);
@@ -509,7 +529,7 @@
     const w = overlay.width, h = overlay.height;
     octx.clearRect(0,0,w,h);
 
-    const axisW = 78;
+    const axisW = AXIS_W;
     const pad = 8;
 
     if(dbgOverlaySel.value === 'tint'){
@@ -591,9 +611,9 @@
 
   function drawSpectrumPlot(){
     const w = spectrumCanvas.width, h = spectrumCanvas.height;
+    if(!audioCtx) return;
     pctx.fillStyle = '#000';
     pctx.fillRect(0,0,w,h);
-    if(!audioCtx) return;
 
     const sr = audioCtx.sampleRate;
     const minHz = parseInt(minHzN.value||"0",10);
@@ -608,6 +628,20 @@
       dbTop = wdb.top;
     }
     const denom = Math.max(1e-6, (dbTop - dbBottom));
+
+    pctx.strokeStyle = 'rgba(230,237,243,0.25)';
+    pctx.beginPath();
+    pctx.moveTo(0, 0.5);
+    pctx.lineTo(w, 0.5);
+    pctx.moveTo(0, h-0.5);
+    pctx.lineTo(w, h-0.5);
+    pctx.stroke();
+    pctx.fillStyle = 'rgba(230,237,243,0.8)';
+    pctx.font = '12px system-ui';
+    pctx.textBaseline = 'top';
+    pctx.fillText(`${Math.round(dbTop)} dB`, 6, 4);
+    pctx.textBaseline = 'bottom';
+    pctx.fillText(`${Math.round(dbBottom)} dB`, 6, h-4);
 
     pctx.strokeStyle = 'rgba(230,237,243,0.85)';
     pctx.lineWidth = 1;
@@ -645,7 +679,7 @@
     const x = (e.clientX - rect.left) * (overlay.width / rect.width);
     const y = (e.clientY - rect.top)  * (overlay.height / rect.height);
 
-    const axisW = 78;
+    const axisW = AXIS_W;
     if(x > axisW) return;
 
     const zone = (y > H*0.75) ? 'bottom' : (y < H*0.25) ? 'top' : 'mid';
@@ -804,9 +838,6 @@
     fftEl.textContent = '-';
     fpsEl.textContent = '-';
     logStatus("Stopped.");
-
-    drawOverlay();
-    drawSpectrumPlot();
   }
 
   // Wire controls
@@ -832,6 +863,17 @@
   }));
   btnStop.addEventListener('click', stop);
   btnClear.addEventListener('click', () => { clearAll(); logStatus("Cleared."); });
+  btnFullscreen.addEventListener('click', async () => {
+    try{
+      if(document.fullscreenElement) await document.exitFullscreen();
+      else await stack.requestFullscreen();
+    } catch(err){
+      logStatus("Fullscreen failed:\n" + (err && err.message ? err.message : String(err)));
+    }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    btnFullscreen.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
+  });
 
   // Init
   enforceDbRange();
@@ -839,6 +881,7 @@
   clearAll();
   drawOverlay();
   drawSpectrumPlot();
+  btnFullscreen.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
   logStatus("Ready.");
 })();
 </script>
