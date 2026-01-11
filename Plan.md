@@ -54,9 +54,9 @@ Debug overlay tint option to make it obvious what layer is on top / what is obsc
 # Items noted for future work
 Musical notes stability
 ✅ Clamp note rendering to ≥ 27.5 Hz (A0) to avoid “infinite notes” behaviour as frequency approaches 0 Hz.
-✅Also ensure log scale never attempts log(0); minimum already enforced for log, but note rendering should independently clamp.
+✅ Also ensure log scale never attempts log(0); minimum already enforced for log, but note rendering should independently clamp.
 
-dB interaction parity with Hz interaction
+✅ dB interaction parity with Hz interaction
 Add draggable dB axis control on the spectrum plot:
 Drag near top adjusts dB top
 Drag near bottom adjusts dB bottom

@@ -295,6 +295,7 @@
   let analyser = null;
   let mediaStream = null;
   let rafId = null;
+  let lastSampleRate = null;
 
   const FFT_SIZE = 4096;
   const BINS = FFT_SIZE/2;
@@ -388,7 +389,7 @@
 
   // Rendering
   function renderColumn(x, spectrumDb){
-    const sr = audioCtx.sampleRate;
+    const sr = audioCtx ? audioCtx.sampleRate : lastSampleRate;
     const minHz = parseInt(minHzN.value||"0",10);
     const maxHz = parseInt(maxHzN.value||String(sr/2),10);
     const scale = scaleSel.value;
@@ -559,9 +560,9 @@
     octx.textBaseline = 'middle';
     octx.fillText('Hz', pad, 14);
 
-    if(!audioCtx) return;
+    if(!audioCtx && !lastSampleRate) return;
 
-    const sr = audioCtx.sampleRate;
+    const sr = audioCtx ? audioCtx.sampleRate : lastSampleRate;
     const minHz = parseInt(minHzN.value||"0",10);
     const maxHz = parseInt(maxHzN.value||String(sr/2),10);
     const scale = scaleSel.value;
@@ -628,11 +629,11 @@
 
   function drawSpectrumPlot(){
     const w = spectrumCanvas.width, h = spectrumCanvas.height;
-    if(!audioCtx) return;
+    if(!audioCtx && !lastSampleRate) return;
     pctx.fillStyle = '#000';
     pctx.fillRect(0,0,w,h);
 
-    const sr = audioCtx.sampleRate;
+    const sr = audioCtx ? audioCtx.sampleRate : lastSampleRate;
     const minHz = parseInt(minHzN.value||"0",10);
     const maxHz = parseInt(maxHzN.value||String(sr/2),10);
     const scale = scaleSel.value;
@@ -654,13 +655,6 @@
     pctx.moveTo(axisW-0.5, 0);
     pctx.lineTo(axisW-0.5, h);
     pctx.stroke();
-    pctx.fillStyle = 'rgba(230,237,243,0.8)';
-    pctx.font = '12px system-ui';
-    pctx.textBaseline = 'top';
-    pctx.fillText('dB', 8, 6);
-    pctx.font = '10px system-ui';
-    pctx.fillText('drag', 8, 22);
-
     pctx.strokeStyle = 'rgba(230,237,243,0.25)';
     pctx.beginPath();
     pctx.moveTo(0, 0.5);
@@ -751,7 +745,7 @@
   // Axis dragging (Hz only), grab-a-frequency model + spectrogram inspect
   let drag = null;
   overlay.addEventListener('pointerdown', (e) => {
-    if(!audioCtx) return;
+    if(!audioCtx && !lastSampleRate) return;
     e.preventDefault();
     overlay.setPointerCapture(e.pointerId);
 
@@ -768,8 +762,7 @@
       return;
     }
 
-    const zone = (y > H*0.75) ? 'bottom' : (y < H*0.25) ? 'top' : 'mid';
-    if(zone === 'mid') return;
+    const zone = (y >= H*0.5) ? 'bottom' : 'top';
 
     const minHz = parseInt(minHzN.value,10);
     const maxHz = parseInt(maxHzN.value,10);
@@ -780,7 +773,7 @@
   }, { passive:false });
 
   overlay.addEventListener('pointermove', (e) => {
-    if(!audioCtx) return;
+    if(!audioCtx && !lastSampleRate) return;
     if(inspectPointer !== null && e.pointerId === inspectPointer){
       const rect = overlay.getBoundingClientRect();
       const x = (e.clientX - rect.left) * (overlay.width / rect.width);
@@ -861,7 +854,7 @@
   // Spectrum dB dragging (grab-a-value model)
   let dbDrag = null;
   spectrumCanvas.addEventListener('pointerdown', (e) => {
-    if(!audioCtx) return;
+    if(!audioCtx && !lastSampleRate) return;
     e.preventDefault();
     spectrumCanvas.setPointerCapture(e.pointerId);
 
@@ -871,8 +864,7 @@
     const axisW = 70;
     if(x > axisW) return;
 
-    const zone = (y < spectrumCanvas.height * 0.25) ? 'top' : (y > spectrumCanvas.height * 0.75) ? 'bottom' : 'mid';
-    if(zone === 'mid') return;
+    const zone = (y >= spectrumCanvas.height * 0.5) ? 'bottom' : 'top';
 
     if(autoDbSel.value === 'on'){
       autoDbSel.value = 'off';
@@ -981,6 +973,7 @@
 
     srEl.textContent = `${audioCtx.sampleRate} Hz`;
     fftEl.textContent = `${FFT_SIZE}`;
+    lastSampleRate = audioCtx.sampleRate;
 
     updateRangeLimits(audioCtx.sampleRate);
     enforceDbRange();
