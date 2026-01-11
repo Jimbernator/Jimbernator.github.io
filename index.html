@@ -38,17 +38,12 @@
     .plotB{ flex: 1 1 520px; }
     @media (max-width: 900px){ .plotB{ max-width:none; width:min(100%, 1400px);} }
 
-    .stack{
-      position:relative;
-      width:min(100%, 1600px);
-      aspect-ratio: 16 / 9;
-      max-height: 70vh;
-    }
+    .stack{ position:relative; width:min(100%, 1600px); }
 
     /* IMPORTANT: background only on the spectrogram canvas, NOT on the overlay */
     #spec{
       display:block; width:100%;
-      height:100%;
+      height: min(70vh, 680px);        /* make it big, especially on phones */
       border-radius:12px; border:1px solid #1f2a3a;
       background:#05070a;
     }
@@ -56,7 +51,7 @@
       position:absolute; left:0; top:0;
       display:block;
       width:100%;
-      height:100%;
+      height: min(70vh, 680px);
       border-radius:12px;
       /* transparent by default; do NOT set background */
       touch-action:none;
@@ -77,9 +72,7 @@
 
     #spectrum{
       display:block; width:100%;
-      height:auto;
-      aspect-ratio: 1 / 1;
-      max-height: 70vh;
+      height: min(70vh, 680px);
       border-radius:12px; border:1px solid #1f2a3a;
       background:#05070a;
       touch-action:none;
@@ -309,10 +302,11 @@
   const dbFrame = new Float32Array(BINS);
 
   // History + pixel buffer
-  const W = spec.width, H = spec.height;
-  const img = sctx.getImageData(0,0,W,H);
+  let W = spec.width, H = spec.height;
+  let img = sctx.getImageData(0,0,W,H);
   for(let i=0;i<img.data.length;i+=4) img.data[i+3] = 255;
   const AXIS_W = 120;
+  const DB_AXIS_W = 70;
 
   let history = new Array(W);
   for(let x=0;x<W;x++) history[x] = null;
@@ -320,6 +314,8 @@
   let lastSpectrum = new Float32Array(BINS);
   let inspectIndex = null;
   let inspectPointer = null;
+  let specDpr = 1;
+  let spectrumDpr = 1;
 
   // Mapping
   function hzToBin(hz, sr){ return Math.round(hz * FFT_SIZE / sr); }
@@ -336,6 +332,57 @@
     }
     const t = (Math.log(hz) - Math.log(minHz)) / (Math.log(maxHz) - Math.log(minHz));
     return (1 - t) * (H-1);
+  }
+
+  function resizeSpecBuffers(newW, newH){
+    const oldHistory = history;
+    const oldW = W;
+    W = newW;
+    H = newH;
+    img = sctx.getImageData(0,0,W,H);
+    for(let i=0;i<img.data.length;i+=4) img.data[i+3] = 255;
+    history = new Array(W);
+    if(oldHistory && oldW > 0 && W > 0){
+      if(W === 1){
+        history[0] = oldHistory[oldW - 1] || null;
+      } else if(oldW === 1){
+        for(let x=0; x<W; x++) history[x] = oldHistory[0] || null;
+      } else {
+        for(let x=0; x<W; x++){
+          const ox = Math.round(x * (oldW - 1) / (W - 1));
+          history[x] = oldHistory[ox] || null;
+        }
+      }
+    } else {
+      for(let x=0;x<W;x++) history[x] = null;
+    }
+  }
+
+  function resizeCanvases(){
+    const dpr = window.devicePixelRatio || 1;
+    const rect = spec.getBoundingClientRect();
+    const newW = Math.max(1, Math.round(rect.width * dpr));
+    const newH = Math.max(1, Math.round(rect.height * dpr));
+    if(newW !== spec.width || newH !== spec.height){
+      spec.width = newW;
+      spec.height = newH;
+      overlay.width = newW;
+      overlay.height = newH;
+      resizeSpecBuffers(newW, newH);
+    }
+    specDpr = dpr;
+
+    const rect2 = spectrumCanvas.getBoundingClientRect();
+    const newW2 = Math.max(1, Math.round(rect2.width * dpr));
+    const newH2 = Math.max(1, Math.round(rect2.height * dpr));
+    if(newW2 !== spectrumCanvas.width || newH2 !== spectrumCanvas.height){
+      spectrumCanvas.width = newW2;
+      spectrumCanvas.height = newH2;
+    }
+    spectrumDpr = dpr;
+
+    if(audioCtx) scheduleFullRedraw(true);
+    else { drawOverlay(); drawSpectrumPlot(); }
   }
 
   function enforceHzRange(){
@@ -540,7 +587,7 @@
     const w = overlay.width, h = overlay.height;
     octx.clearRect(0,0,w,h);
 
-    const axisW = AXIS_W;
+    const axisW = Math.round(AXIS_W * specDpr);
     const pad = 8;
 
     if(dbgOverlaySel.value === 'tint'){
@@ -650,7 +697,7 @@
     }
     const denom = Math.max(1e-6, (dbTop - dbBottom));
 
-    const axisW = 70;
+    const axisW = Math.round(DB_AXIS_W * spectrumDpr);
     pctx.fillStyle = 'rgba(15,22,33,0.7)';
     pctx.fillRect(0,0,axisW,h);
     pctx.strokeStyle = 'rgba(230,237,243,0.35)';
@@ -756,7 +803,7 @@
     const x = (e.clientX - rect.left) * (overlay.width / rect.width);
     const y = (e.clientY - rect.top)  * (overlay.height / rect.height);
 
-    const axisW = AXIS_W;
+    const axisW = Math.round(AXIS_W * specDpr);
     if(x > axisW){
       inspectIndex = clamp(Math.round(x), 0, W-1);
       inspectPointer = e.pointerId;
@@ -864,7 +911,7 @@
     const rect = spectrumCanvas.getBoundingClientRect();
     const x = (e.clientX - rect.left) * (spectrumCanvas.width / rect.width);
     const y = (e.clientY - rect.top)  * (spectrumCanvas.height / rect.height);
-    const axisW = 70;
+    const axisW = Math.round(DB_AXIS_W * spectrumDpr);
     if(x > axisW) return;
 
     const zone = (y >= spectrumCanvas.height * 0.5) ? 'bottom' : 'top';
@@ -1045,11 +1092,14 @@
   });
   document.addEventListener('fullscreenchange', () => {
     btnFullscreen.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
+    resizeCanvases();
   });
+  window.addEventListener('resize', () => resizeCanvases());
 
   // Init
   enforceDbRange();
   rangeLabel.textContent = `${minHzN.value}–${maxHzN.value} Hz`;
+  resizeCanvases();
   clearAll();
   drawOverlay();
   drawSpectrumPlot();
