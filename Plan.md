@@ -54,10 +54,10 @@ Debug overlay tint option to make it obvious what layer is on top / what is obsc
 # Items noted for future work
 Musical notes stability
 ✅ Clamp note rendering to ≥ 27.5 Hz (A0) to avoid “infinite notes” behaviour as frequency approaches 0 Hz.
-Also ensure log scale never attempts log(0); minimum already enforced for log, but note rendering should independently clamp.
+✅Also ensure log scale never attempts log(0); minimum already enforced for log, but note rendering should independently clamp.
 
 dB interaction parity with Hz interaction
-Add draggable dB axis control on the spectrum plot:
+✅ Add draggable dB axis control on the spectrum plot:
 Drag near top adjusts dB top
 Drag near bottom adjusts dB bottom
 Same “grab-a-value” model as Hz axis
@@ -82,13 +82,13 @@ Desktop layout refinement
 ✅ Spectrum plot does not currently fill available width in desktop mode; revise responsive layout so spectrum can expand or reflow more naturally.
 
 Note overlay enhancements
-Render musical notes on the spectrum plot as well (same colours, labels C/D/E…).
+✅ Render musical notes on the spectrum plot as well (same colours, labels C/D/E…).
 Keep note colour consistent across spectrogram + spectrum…. Actually they were there just too small to see…
 
 Stop behavior
 ✅ “Stop” should stop acquisition but not clear existing spectrogram/spectrum visuals.
 
-Cursor/inspection interaction
+✅ Cursor/inspection interaction
 When the user touches/presses on the spectrogram:
 Spectrum plot should display the spectrum for the corresponding time column (frame) under the finger.
 On release, spectrum returns to the latest frame.
@@ -96,3 +96,6 @@ On release, spectrum returns to the latest frame.
 This implies mapping x-position → history index, and either storing per-column spectra (already done) or selecting the nearest stored frame.
 
 These notes capture the intended direction: transition from a debug-friendly build to a phone-first tool with direct manipulation (Hz and dB) and inspection workflows (touch-to-scrub spectra), with robust note overlays and optional offline/fullscreen packaging.
+
+The axis drag area appears to only start from the top 25% of the screen (same issue on the bottom 25%). It should really split in the middle so there is no dead touch zone there.
+

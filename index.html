@@ -643,6 +643,8 @@
     pctx.textBaseline = 'bottom';
     pctx.fillText(`${Math.round(dbBottom)} dB`, 6, h-4);
 
+    const spectrum = (inspectIndex !== null && history[inspectIndex]) ? history[inspectIndex] : lastSpectrum;
+
     pctx.strokeStyle = 'rgba(230,237,243,0.85)';
     pctx.lineWidth = 1;
     pctx.beginPath();
@@ -657,7 +659,7 @@
         hz = Math.exp(Math.log(mn) + t*(Math.log(maxHz)-Math.log(mn)));
       }
       const bin = clamp(hzToBin(hz, sr), 0, BINS-1);
-      const vDb = lastSpectrum[bin];
+      const vDb = spectrum[bin];
 
       const yn = clamp((vDb - dbBottom) / denom, 0, 1);
       const y = (1 - yn) * (h-1);
@@ -666,10 +668,45 @@
       else pctx.lineTo(px, y);
     }
     pctx.stroke();
+
+    if(notesSel.value === 'on'){
+      const A4 = 440;
+      const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+      const noteMinHz = Math.max(minHz, 27.5);
+      if(maxHz >= noteMinHz){
+        const nMin = Math.floor(69 + 12*Math.log2(noteMinHz / A4));
+        const nMax = Math.ceil (69 + 12*Math.log2(maxHz / A4));
+        for(let n=nMin; n<=nMax; n++){
+          const f = A4 * Math.pow(2, (n-69)/12);
+          if(f < minHz || f > maxHz) continue;
+          const t = (scale === 'linear')
+            ? (f - minHz) / (maxHz - minHz)
+            : (Math.log(f) - Math.log(Math.max(minHz, 5))) / (Math.log(maxHz) - Math.log(Math.max(minHz, 5)));
+          const x = clamp(t, 0, 1) * (w-1);
+          const pc = ((n % 12) + 12) % 12;
+          pctx.strokeStyle = pitchClassColor(pc);
+          pctx.lineWidth = 1;
+          pctx.beginPath();
+          pctx.moveTo(x + 0.5, 0);
+          pctx.lineTo(x + 0.5, h);
+          pctx.stroke();
+
+          const name = noteNames[pc];
+          if(name.indexOf('#') === -1){
+            pctx.fillStyle = 'rgba(230,237,243,0.6)';
+            pctx.font = '10px system-ui';
+            pctx.textBaseline = 'top';
+            pctx.fillText(name + Math.floor((n/12)-1), x + 4, 2);
+          }
+        }
+      }
+    }
   }
 
-  // Axis dragging (Hz only), grab-a-frequency model
+  // Axis dragging (Hz only), grab-a-frequency model + spectrogram inspect
   let drag = null;
+  let inspectIndex = null;
+  let inspectPointer = null;
   overlay.addEventListener('pointerdown', (e) => {
     if(!audioCtx) return;
     e.preventDefault();
@@ -680,7 +717,12 @@
     const y = (e.clientY - rect.top)  * (overlay.height / rect.height);
 
     const axisW = AXIS_W;
-    if(x > axisW) return;
+    if(x > axisW){
+      inspectIndex = clamp(Math.round(x), 0, W-1);
+      inspectPointer = e.pointerId;
+      drawSpectrumPlot();
+      return;
+    }
 
     const zone = (y > H*0.75) ? 'bottom' : (y < H*0.25) ? 'top' : 'mid';
     if(zone === 'mid') return;
@@ -694,7 +736,15 @@
   }, { passive:false });
 
   overlay.addEventListener('pointermove', (e) => {
-    if(!drag || !audioCtx || e.pointerId !== drag.pointerId) return;
+    if(!audioCtx) return;
+    if(inspectPointer !== null && e.pointerId === inspectPointer){
+      const rect = overlay.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (overlay.width / rect.width);
+      inspectIndex = clamp(Math.round(x), 0, W-1);
+      drawSpectrumPlot();
+      return;
+    }
+    if(!drag || e.pointerId !== drag.pointerId) return;
     e.preventDefault();
 
     const rect = overlay.getBoundingClientRect();
@@ -744,8 +794,85 @@
     scheduleFullRedraw();
   }, { passive:false });
 
-  overlay.addEventListener('pointerup', (e) => { if(drag && e.pointerId === drag.pointerId) drag = null; }, { passive:false });
-  overlay.addEventListener('pointercancel', (e) => { if(drag && e.pointerId === drag.pointerId) drag = null; }, { passive:false });
+  overlay.addEventListener('pointerup', (e) => {
+    if(drag && e.pointerId === drag.pointerId) drag = null;
+    if(inspectPointer !== null && e.pointerId === inspectPointer){
+      inspectPointer = null;
+      inspectIndex = null;
+      drawSpectrumPlot();
+    }
+  }, { passive:false });
+  overlay.addEventListener('pointercancel', (e) => {
+    if(drag && e.pointerId === drag.pointerId) drag = null;
+    if(inspectPointer !== null && e.pointerId === inspectPointer){
+      inspectPointer = null;
+      inspectIndex = null;
+      drawSpectrumPlot();
+    }
+  }, { passive:false });
+
+  // Spectrum dB dragging (grab-a-value model)
+  let dbDrag = null;
+  spectrumCanvas.addEventListener('pointerdown', (e) => {
+    if(!audioCtx) return;
+    e.preventDefault();
+    spectrumCanvas.setPointerCapture(e.pointerId);
+
+    const rect = spectrumCanvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (spectrumCanvas.width / rect.width);
+    const y = (e.clientY - rect.top)  * (spectrumCanvas.height / rect.height);
+    const axisW = 70;
+    if(x > axisW) return;
+
+    const zone = (y < spectrumCanvas.height * 0.25) ? 'top' : (y > spectrumCanvas.height * 0.75) ? 'bottom' : 'mid';
+    if(zone === 'mid') return;
+
+    if(autoDbSel.value === 'on'){
+      autoDbSel.value = 'off';
+    }
+
+    const dbBottom = parseFloat(dbBottomN.value||"-120");
+    const dbTop = parseFloat(dbTopN.value||"-20");
+    const t = clamp(y / (spectrumCanvas.height - 1), 1e-3, 1 - 1e-3);
+    const db0 = dbTop - t * (dbTop - dbBottom);
+    dbDrag = { pointerId: e.pointerId, zone, db0 };
+  }, { passive:false });
+
+  spectrumCanvas.addEventListener('pointermove', (e) => {
+    if(!dbDrag || e.pointerId !== dbDrag.pointerId) return;
+    e.preventDefault();
+
+    const rect = spectrumCanvas.getBoundingClientRect();
+    const y = (e.clientY - rect.top)  * (spectrumCanvas.height / rect.height);
+    const t = clamp(y / (spectrumCanvas.height - 1), 1e-3, 1 - 1e-3);
+
+    let dbBottom = parseFloat(dbBottomN.value||"-120");
+    let dbTop = parseFloat(dbTopN.value||"-20");
+    if(dbDrag.zone === 'top'){
+      dbTop = (dbDrag.db0 - t * dbBottom) / (1 - t);
+    } else {
+      dbBottom = (dbDrag.db0 - (1 - t) * dbTop) / t;
+    }
+
+    dbBottom = clamp(Math.round(dbBottom), -180, 20);
+    dbTop = clamp(Math.round(dbTop), -180, 20);
+    if(dbTop <= dbBottom) dbTop = dbBottom + 1;
+
+    dbBottomN.value = String(dbBottom);
+    dbTopN.value = String(dbTop);
+    dbBottomR.value = dbBottomN.value;
+    dbTopR.value = dbTopN.value;
+
+    enforceDbRange();
+    scheduleFullRedraw();
+  }, { passive:false });
+
+  spectrumCanvas.addEventListener('pointerup', (e) => {
+    if(dbDrag && e.pointerId === dbDrag.pointerId) dbDrag = null;
+  }, { passive:false });
+  spectrumCanvas.addEventListener('pointercancel', (e) => {
+    if(dbDrag && e.pointerId === dbDrag.pointerId) dbDrag = null;
+  }, { passive:false });
 
   // Loop + FPS
   let fpsT0 = nowMs();
