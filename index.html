@@ -108,8 +108,8 @@
       <label>
         Auto dB
         <select id="autoDbSel">
-          <option value="on" selected>On</option>
-          <option value="off">Off</option>
+          <option value="on">On</option>
+          <option value="off" selected>Off</option>
         </select>
       </label>
 
@@ -160,16 +160,16 @@
       <label>
         dB bottom
         <div class="row">
-          <input id="dbBottom" type="number" min="-180" max="20" step="1" value="-120">
-          <input id="dbBottomRange" type="range" min="-180" max="20" value="-120">
+          <input id="dbBottom" type="number" min="-180" max="20" step="1" value="-100">
+          <input id="dbBottomRange" type="range" min="-180" max="20" value="-100">
         </div>
       </label>
 
       <label>
         dB top
         <div class="row">
-          <input id="dbTop" type="number" min="-180" max="20" step="1" value="-20">
-          <input id="dbTopRange" type="range" min="-180" max="20" value="-20">
+          <input id="dbTop" type="number" min="-180" max="20" step="1" value="-50">
+          <input id="dbTopRange" type="range" min="-180" max="20" value="-50">
         </div>
       </label>
 
@@ -406,8 +406,8 @@
   }
 
   function enforceDbRange(){
-    let lo = parseFloat(dbBottomN.value||"-120");
-    let hi = parseFloat(dbTopN.value||"-20");
+    let lo = parseFloat(dbBottomN.value||"-100");
+    let hi = parseFloat(dbTopN.value||"-50");
     if(hi <= lo) hi = lo + 1;
     dbBottomN.value = String(lo);
     dbTopN.value = String(hi);
@@ -448,8 +448,8 @@
     const maxHz = parseInt(maxHzN.value||String(sr/2),10);
     const scale = scaleSel.value;
 
-    let dbBottom = parseFloat(dbBottomN.value||"-120");
-    let dbTop    = parseFloat(dbTopN.value||"-20");
+    let dbBottom = parseFloat(dbBottomN.value||"-100");
+    let dbTop    = parseFloat(dbTopN.value||"-50");
     if(autoDbSel.value === 'on'){
       const w = estimateAutoDb(spectrumDb);
       // update UI occasionally to avoid jitter
@@ -688,8 +688,8 @@
     const maxHz = parseInt(maxHzN.value||String(sr/2),10);
     const scale = scaleSel.value;
 
-    let dbBottom = parseFloat(dbBottomN.value||"-120");
-    let dbTop    = parseFloat(dbTopN.value||"-20");
+    let dbBottom = parseFloat(dbBottomN.value||"-100");
+    let dbTop    = parseFloat(dbTopN.value||"-50");
     if(autoDbSel.value === 'on'){
       const wdb = estimateAutoDb(lastSpectrum);
       dbBottom = wdb.bottom;
@@ -922,8 +922,8 @@
       scheduleFullRedraw();
     }
 
-    const dbBottom = parseFloat(dbBottomN.value||"-120");
-    const dbTop = parseFloat(dbTopN.value||"-20");
+    const dbBottom = parseFloat(dbBottomN.value||"-100");
+    const dbTop = parseFloat(dbTopN.value||"-50");
     const t = clamp(y / (spectrumCanvas.height - 1), 1e-3, 1 - 1e-3);
     const db0 = dbTop - t * (dbTop - dbBottom);
     dbDrag = { pointerId: e.pointerId, zone, db0 };
@@ -937,8 +937,8 @@
     const y = (e.clientY - rect.top)  * (spectrumCanvas.height / rect.height);
     const t = clamp(y / (spectrumCanvas.height - 1), 1e-3, 1 - 1e-3);
 
-    let dbBottom = parseFloat(dbBottomN.value||"-120");
-    let dbTop = parseFloat(dbTopN.value||"-20");
+    let dbBottom = parseFloat(dbBottomN.value||"-100");
+    let dbTop = parseFloat(dbTopN.value||"-50");
     if(dbDrag.zone === 'top'){
       dbTop = (dbDrag.db0 - t * dbBottom) / (1 - t);
     } else {
