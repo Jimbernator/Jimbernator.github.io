@@ -1105,6 +1105,9 @@
   drawSpectrumPlot();
   btnFullscreen.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
   logStatus("Ready.");
+  start().catch(err => {
+    logStatus("Auto-start mic failed:\n" + (err && err.message ? err.message : String(err)));
+  });
 })();
 </script>
 </body>
